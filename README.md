@@ -52,7 +52,3 @@
 
 
 
-
-## **Acknowledgments**
-
- ####  Pytube Library for making it easy to download YouTube videos using Python.
