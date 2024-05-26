@@ -1,87 +1,165 @@
-import os
+import tkinter as tk
+from tkinter import ttk, filedialog, messagebox
+from ttkthemes import ThemedTk
 from pytube import Playlist, YouTube
-from tkinter import *
-from tkinter.ttk import *
-from tkinter import filedialog
+import threading
+import os
 
+class YouTubeDownloader:
+    def __init__(self, root):
+        self.root = root
+        self.root.title("YouTube Playlist Downloader")
+        self.root.geometry("600x600")
 
+        # Apply the theme
+        root.set_theme("radiance")
 
-# function to download playlist videos
-def download_playlist_videos(playlist_url, quality, destination, progress_bar, progress_text):
-    playlist = Playlist(playlist_url)
-    # get all video urls in the playlist
-    urls = playlist.video_urls
-    print(f'Downloading {len(urls)} videos...')
-    # loop over the urls and download each video
-    for i, url in enumerate(urls):
-        progress_text.set(f'Downloading video {i+1} of {len(urls)}')
-        download_video(url, quality, destination)
-        progress_bar['value'] = (i+1)/len(urls)*100
-        root.update_idletasks()
-    progress_text.set('Playlist downloaded successfully!')
-    progress_bar['value'] = 100
+        self.main_frame = ttk.Frame(root, padding="10 10 10 10")
+        self.main_frame.pack(fill=tk.BOTH, expand=True)
 
-# function to download a single video
-def download_video(video_url, quality, destination):
-    yt = YouTube(video_url)
-    video = yt.streams.filter(res=quality).first()
-    video.download(output_path=destination)
-    print(f'Downloaded: {video.title}')
+        # URL Input Section
+        self.url_frame = ttk.LabelFrame(self.main_frame, text="Playlist URL", padding="10 10 10 10")
+        self.url_frame.pack(fill=tk.X, pady=10)
 
-# function to select the destination folder using a file dialog
-def browse_destination_folder():
-    folder_path = filedialog.askdirectory()
-    destination_folder.set(folder_path)
+        self.url_entry = ttk.Entry(self.url_frame, width=50)
+        self.url_entry.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=5)
 
-# create main window
-root = Tk()
-root.title('Vidlistloader')
-root.geometry('400x300')
+        self.fetch_button = ttk.Button(self.url_frame, text="Fetch Videos", command=self.fetch_videos)
+        self.fetch_button.pack(side=tk.RIGHT, padx=5)
 
-# create input fields and labels
-playlist_url = StringVar()
-quality = StringVar()
-destination_folder = StringVar()
+        # Video Selection Section
+        self.video_frame = ttk.LabelFrame(self.main_frame, text="Select Videos", padding="10 10 10 10")
+        self.video_frame.pack(fill=tk.BOTH, expand=True, pady=10)
 
-playlist_label = Label(root, text='Playlist URL:')
-playlist_entry = Entry(root, textvariable=playlist_url)
+        self.canvas = tk.Canvas(self.video_frame, borderwidth=0)
+        self.video_list_frame = ttk.Frame(self.canvas)
+        self.vsb = ttk.Scrollbar(self.video_frame, orient="vertical", command=self.canvas.yview)
+        self.canvas.configure(yscrollcommand=self.vsb.set)
 
-quality_label = Label(root, text='Quality:')
-quality_entry = Entry(root, textvariable=quality)
+        self.vsb.pack(side="right", fill="y")
+        self.canvas.pack(side="left", fill="both", expand=True)
+        self.canvas.create_window((4, 4), window=self.video_list_frame, anchor="nw", tags="self.video_list_frame")
 
-destination_label = Label(root, text='Destination:')
-destination_entry = Entry(root, textvariable=destination_folder)
-destination_button = Button(root, text='Browse', command=browse_destination_folder)
+        self.video_list_frame.bind("<Configure>", self.on_frame_configure)
 
-Copyright_label = Label(root, text='© 2023 -Amr Elgendy, All right reserved')
+        # Quality and Path Selection Section
+        self.options_frame = ttk.LabelFrame(self.main_frame, text="Options", padding="10 10 10 10")
+        self.options_frame.pack(fill=tk.X, pady=10)
 
-# create progress bar and text
-progress_bar = Progressbar(root, orient=HORIZONTAL, length=200, mode='determinate')
-progress_text = StringVar()
-progress_label = Label(root, textvariable=progress_text)
+        self.quality_label = ttk.Label(self.options_frame, text="Select Quality:")
+        self.quality_label.pack(side=tk.LEFT, padx=5)
 
-# create download button
-download_button = Button(root, text='Download', command=lambda: download_playlist_videos(playlist_url.get(), quality.get(), destination_folder.get(), progress_bar, progress_text))
+        self.quality_options = ["144p", "240p", "360p", "480p", "720p", "1080p"]
+        self.quality_var = tk.StringVar(value=self.quality_options[0])
+        self.quality_menu = ttk.OptionMenu(self.options_frame, self.quality_var, *self.quality_options)
+        self.quality_menu.pack(side=tk.LEFT, padx=5)
 
-# place widgets in the window
-playlist_label.pack()
-playlist_entry.pack()
+        self.path_label = ttk.Label(self.options_frame, text="Download Path:")
+        self.path_label.pack(side=tk.LEFT, padx=5)
 
+        self.path_entry = ttk.Entry(self.options_frame, width=30)
+        self.path_entry.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=5)
 
-quality_label.pack()
-quality_entry.pack()
+        self.browse_button = ttk.Button(self.options_frame, text="Browse", command=self.browse_path)
+        self.browse_button.pack(side=tk.RIGHT, padx=5)
 
-destination_label.pack()
-destination_entry.pack()
-destination_button.pack()
+        # Download Section
+        self.download_frame = ttk.Frame(self.main_frame, padding="10 10 10 10")
+        self.download_frame.pack(fill=tk.X, pady=10)
 
+        self.download_button = ttk.Button(self.download_frame, text="Download", command=self.start_download)
+        self.download_button.pack(pady=10)
 
-download_button.pack()
+        self.current_video_label = ttk.Label(self.download_frame, text="Current Video: None")
+        self.current_video_label.pack(pady=5)
 
-progress_bar.pack()
-progress_label.pack()
+        self.progress = ttk.Progressbar(self.download_frame, orient='horizontal', length=400, mode='determinate')
+        self.progress.pack(pady=5)
 
-Copyright_label.pack()
+    def fetch_videos(self):
+        url = self.url_entry.get()
+        if not url:
+            messagebox.showerror("Error", "Please enter a playlist URL.")
+            return
+        try:
+            playlist = Playlist(url)
+            self.videos = playlist.videos
+            for widget in self.video_list_frame.winfo_children():
+                widget.destroy()
+            self.video_vars = []
+            for video in self.videos:
+                var = tk.BooleanVar()
+                chk = ttk.Checkbutton(self.video_list_frame, text=video.title, variable=var)
+                chk.pack(anchor='w', pady=2)
+                self.video_vars.append(var)
+            self.on_frame_configure(None)  # Adjust the scroll region
+        except Exception as e:
+            messagebox.showerror("Error", f"Failed to fetch playlist: {e}")
 
+    def browse_path(self):
+        path = filedialog.askdirectory()
+        if path:
+            self.path_entry.delete(0, tk.END)
+            self.path_entry.insert(0, path)
 
-root.mainloop()
+    def start_download(self):
+        selected_videos = [video for video, var in zip(self.videos, self.video_vars) if var.get()]
+        quality = self.quality_var.get()
+        path = self.path_entry.get()
+        if not selected_videos:
+            messagebox.showwarning("Warning", "No videos selected.")
+            return
+        if not path:
+            messagebox.showwarning("Warning", "No download path selected.")
+            return
+        if not os.path.isdir(path):
+            messagebox.showwarning("Warning", "The selected path is invalid.")
+            return
+        self.progress["value"] = 0
+        self.progress["maximum"] = len(selected_videos)
+        threading.Thread(target=self.download_videos, args=(selected_videos, quality, path)).start()
+
+    def download_videos(self, videos, quality, path):
+        try:
+            for idx, video in enumerate(videos):
+                self.update_status(f"Current Video: {video.title}")
+                yt = video.streams.filter(progressive=True, res=quality, file_extension='mp4').first()
+                if yt is None:
+                    yt = self.get_closest_quality(video, quality)
+                if yt:
+                    yt.download(output_path=path)
+                else:
+                    messagebox.showerror("Error", f"Failed to find suitable stream for: {video.title}")
+                self.update_progress(idx + 1)
+            self.update_status("Download Complete!")
+        except Exception as e:
+            messagebox.showerror("Error", f"Download failed: {e}")
+
+    def get_closest_quality(self, video, quality):
+        available_qualities = ["144p", "240p", "360p", "480p", "720p", "1080p"]
+        current_idx = available_qualities.index(quality)
+        for q in available_qualities[current_idx:]:
+            yt = video.streams.filter(progressive=True, res=q, file_extension='mp4').first()
+            if yt:
+                return yt
+        for q in reversed(available_qualities[:current_idx]):
+            yt = video.streams.filter(progressive=True, res=q, file_extension='mp4').first()
+            if yt:
+                return yt
+        return None
+
+    def update_status(self, message):
+        # This method is called from a different thread, so we need to use `after` to update the GUI.
+        self.root.after(0, lambda: self.current_video_label.config(text=message))
+
+    def update_progress(self, value):
+        # This method is called from a different thread, so we need to use `after` to update the GUI.
+        self.root.after(0, lambda: self.progress.config(value=value))
+
+    def on_frame_configure(self, event):
+        self.canvas.configure(scrollregion=self.canvas.bbox("all"))
+
+if __name__ == "__main__":
+    root = ThemedTk(theme="radiance")
+    app = YouTubeDownloader(root)
+    root.mainloop()
